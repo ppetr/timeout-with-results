@@ -17,5 +17,5 @@ Source-repository head
 
 Library
   Build-Depends:     base, parallel >= 3, mtl >= 2
-  Exposed-Modules:   System.Timeout.Valued
+  Exposed-Modules:   System.Timeout.Returning
   ghc-options:       -O2

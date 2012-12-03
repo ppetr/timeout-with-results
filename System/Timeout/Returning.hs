@@ -17,7 +17,7 @@
 
 {-# LANGUAGE MultiParamTypeClasses, FunctionalDependencies, FlexibleInstances, FlexibleContexts #-}
 
-module System.Timeout.Valued (MonadTimeout(..), Timeout(), timeoutVal, returning) where
+module System.Timeout.Returning (MonadTimeout(..), Timeout(), timeoutVal, returning) where
 {-
  Mind that (from documentation of throwTo):
 

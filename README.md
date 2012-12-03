@@ -10,7 +10,7 @@ return the best result found within a time limit.
 {-# LANGUAGE FlexibleContexts #-}
 import Control.Monad
 import Control.Seq
-import System.Timeout.Valued
+import System.Timeout.Returning
 
 fac :: Integer -> Integer
 fac 0 = 1
