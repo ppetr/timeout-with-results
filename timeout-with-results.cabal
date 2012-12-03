@@ -2,7 +2,7 @@ Name:                timeout-with-results
 Version:             0.1
 Description:         Evaluates a computation withing a given timeout limit, alowing it to return intermediate results. Useful for AI algorithms that should return the best result within a given wallclock time limit.
 License:             LGPL
-License-file:        LICENSE
+License-file:        COPYING.LESSER
 Author:              Petr Pudlák
 Copyright:           (c) 2012 Petr Pudlák
 Maintainer:          petr.mvd@gmail.com
