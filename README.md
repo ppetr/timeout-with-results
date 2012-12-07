@@ -23,7 +23,7 @@ longComp = let loop n = tell (show $ fac n) >> loop (n + 1)
 
 -- | Print the largest factorial we were able to compute in 10ms.
 main :: IO ()
-main = timeoutVal rseq 10000 longComp >>= print
+main = runTimeout rseq 10000 longComp >>= print
 ```
 
 

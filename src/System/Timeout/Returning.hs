@@ -17,7 +17,7 @@
 
 {-# LANGUAGE MultiParamTypeClasses, FunctionalDependencies, FlexibleInstances, FlexibleContexts #-}
 
-module System.Timeout.Returning (MonadTimeout(..), Timeout(), timeoutVal, returning) where
+module System.Timeout.Returning (MonadTimeout(..), Timeout(), runTimeout, returning) where
 {-
  Mind that (from documentation of throwTo):
 
@@ -57,19 +57,19 @@ instance MonadTimeout w (Timeout w) where
 
 -- | Execute the given computation with a timeout limit and force
 -- the result to the form defined by the given 'Strategy'.
-timeoutVal
+runTimeout
     :: Strategy w       -- ^ Evaluate values passed to 'tell' using this strategy.
     -> Int              -- ^ Timeout in microseconds.
     -> Timeout w ()     -- ^ The computation.
     -> IO (Maybe w)     -- ^ The result, or 'Nothing' if no 'tell' was called by the computation.
-timeoutVal stg duration (Timeout k) = do
+runTimeout stg duration (Timeout k) = do
     mvar <- newMVar Nothing
     let save f = modifyMVar_ mvar (return . Just . withStrategy stg . f)
     T.timeout duration (runReaderT k save)
     readMVar mvar
 
 -- | Convert a monadic computation returning a value of the result type into
--- 'm ()' so that it can be used with 'timeoutVal'. Calling 'returning k'
+-- 'm ()' so that it can be used with 'runTimeout'. Calling 'returning k'
 -- is equivalent to 'k >>= tell'.
 returning :: MonadTimeout w m => m w -> m ()
 returning = (>>= tell)
