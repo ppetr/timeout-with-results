@@ -38,6 +38,8 @@ import Control.Seq
 import Data.Monoid
 import qualified System.Timeout as T
 
+-- | Monad for computations that can save partial results
+-- of type @w@ during their evaluation.
 class Monad m => MonadTimeout w m | m -> w where
     -- | Save an intermediate result of the computation.
     tell :: w -> m ()
@@ -50,7 +52,8 @@ class Monad m => MonadTimeout w m | m -> w where
     yield :: m ()
 
 -- -----------------------------------------------------------------
-    
+
+-- | An 'IO'-based implementation of 'MonadTimeout'.
 newtype Timeout w a = Timeout { untimeout :: ReaderT ((Maybe w -> w) -> IO ()) IO a }
 
 instance Monad (Timeout w) where
@@ -64,6 +67,9 @@ instance MonadTimeout w (Timeout w) where
 
 -- | Execute the given computation with a timeout limit and force
 -- the result to the form defined by the given 'Strategy'.
+-- In most cases, the strategy will be either 'rseq' or 'rdeepseq'.
+-- This ensures that the computation is actually performed by the
+-- given computation, not by the consuming thread.
 runTimeout
     :: Strategy w       -- ^ Evaluate values passed to 'tell' using this strategy.
     -> Int              -- ^ Timeout in microseconds.
