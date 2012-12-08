@@ -21,9 +21,11 @@ module System.Timeout.Returning (
     MonadTimeout(..),
     Timeout(),
     runTimeout,
+    -- helpers:
     returning,
+    seqLast,
     -- re-exports:
-    rseq
+    rseq, rdeepseq
 ) where
 {-
  Mind that (from documentation of throwTo):
@@ -35,6 +37,7 @@ import Control.Monad.Reader
 import qualified Control.Concurrent as C
 import Control.Concurrent.MVar
 import Control.Seq
+import qualified Data.Foldable as F
 import Data.Monoid
 import qualified System.Timeout as T
 
@@ -43,10 +46,10 @@ import qualified System.Timeout as T
 class Monad m => MonadTimeout w m | m -> w where
     -- | Save an intermediate result of the computation.
     tell :: w -> m ()
-    tell = tellWith . const
+    --tell = tellWith . const
     -- | Combine an intermediate result of the computation with the current
     -- saved result (if any) and save it.
-    tellWith :: (Maybe w -> w) -> m ()
+    --tellWith :: (Maybe w -> w) -> m ()
     -- | Explicitly allow interrupting the computation at this point.
     -- Experimental.
     yield :: m ()
@@ -54,16 +57,49 @@ class Monad m => MonadTimeout w m | m -> w where
 -- -----------------------------------------------------------------
 
 -- | An 'IO'-based implementation of 'MonadTimeout'.
-newtype Timeout w a = Timeout { untimeout :: ReaderT ((Maybe w -> w) -> IO ()) IO a }
+newtype Timeout w a = Timeout { untimeout :: ReaderT (w -> IO ()) IO a }
 
 instance Monad (Timeout w) where
     return = Timeout . return
     (Timeout v) >>= f = Timeout (v >>= (untimeout . f))
 instance MonadIO (Timeout w) where
     liftIO = Timeout . lift
-instance MonadTimeout w (Timeout w) where
-    tellWith f = Timeout $ ask >>= \r -> lift (r f)
+instance Monoid w => MonadTimeout w (Timeout w) where
+    tell x = Timeout $ ask >>= \r -> lift (r x)
+    --tellWith f = Timeout $ ask >>= \r -> lift (r f)
     yield = liftIO C.yield
+
+
+instance Functor Last where
+    fmap f (Last x)     = Last $ fmap f x
+instance F.Foldable Last where
+    foldr f z (Last x)  = F.foldr f z x
+
+seqLast :: Strategy a -> Strategy (Last a)
+seqLast = seqFoldable
+
+withTimeout :: (w' -> w) -> (Timeout w' a -> Timeout w a)
+withTimeout f (Timeout k) = Timeout $ withReaderT (. f) k
+
+-- | Execute the given computation with a timeout limit and force
+-- the result to the form defined by the given 'Strategy'.
+-- In most cases, the strategy will be either 'rseq' or 'rdeepseq'.
+-- This ensures that the computation is actually performed by the
+-- given computation, not by the consuming thread.
+runTimeout'
+    :: Strategy w       -- ^ Evaluate values passed to 'tell' using this strategy.
+    -> Int              -- ^ Timeout in microseconds.
+    -> Timeout w ()     -- ^ The computation.
+    -> IO (Maybe w)     -- ^ The result, or 'Nothing' if no 'tell' was called by the computation.
+runTimeout' stg duration k = do
+    r <- runTimeout (seqLast stg) duration (withTimeout (Last . Just) k)
+    return $ either getLast (const Nothing) r
+{-
+    mvar <- newMVar Nothing
+    let save f = modifyMVar_ mvar (return . Just . withStrategy stg . f)
+    T.timeout duration (runReaderT k save)
+    readMVar mvar
+-}
 
 -- | Execute the given computation with a timeout limit and force
 -- the result to the form defined by the given 'Strategy'.
@@ -71,15 +107,17 @@ instance MonadTimeout w (Timeout w) where
 -- This ensures that the computation is actually performed by the
 -- given computation, not by the consuming thread.
 runTimeout
-    :: Strategy w       -- ^ Evaluate values passed to 'tell' using this strategy.
+    :: Monoid w
+    => Strategy w       -- ^ Evaluate values passed to 'tell' using this strategy.
     -> Int              -- ^ Timeout in microseconds.
-    -> Timeout w ()     -- ^ The computation.
-    -> IO (Maybe w)     -- ^ The result, or 'Nothing' if no 'tell' was called by the computation.
+    -> Timeout w r      -- ^ The computation.
+    -> IO (Either w r)  -- ^ Either the final result or
+                        -- the last partial result saved.
 runTimeout stg duration (Timeout k) = do
-    mvar <- newMVar Nothing
-    let save f = modifyMVar_ mvar (return . Just . withStrategy stg . f)
-    T.timeout duration (runReaderT k save)
-    readMVar mvar
+    mvar <- newMVar (Right mempty)
+    let save x = modifyMVar_ mvar (return . liftM (withStrategy stg . (`mappend` x)))
+    T.timeout duration (runReaderT k save >>= \r -> modifyMVar_ mvar (\_ -> return $ Left r))
+    liftM (either Right Left) $ readMVar mvar
 
 -- | Convert a monadic computation returning a value of the result type into
 -- 'm ()' so that it can be used with 'runTimeout'. Calling 'returning k'
