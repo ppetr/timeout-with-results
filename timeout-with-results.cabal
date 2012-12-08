@@ -1,5 +1,5 @@
 Name:                timeout-with-results
-Version:             0.1
+Version:             0.1.1
 Synopsis:
     Runs a time-limited computation alowing it to return intermediate results.
 Description:

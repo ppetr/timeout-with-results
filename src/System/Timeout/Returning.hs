@@ -17,7 +17,14 @@
 
 {-# LANGUAGE MultiParamTypeClasses, FunctionalDependencies, FlexibleInstances, FlexibleContexts #-}
 
-module System.Timeout.Returning (MonadTimeout(..), Timeout(), runTimeout, returning) where
+module System.Timeout.Returning (
+    MonadTimeout(..),
+    Timeout(),
+    runTimeout,
+    returning,
+    -- re-exports:
+    rseq
+) where
 {-
  Mind that (from documentation of throwTo):
 
