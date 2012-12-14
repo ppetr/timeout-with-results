@@ -14,15 +14,15 @@ import Control.Monad
 import Data.Numbers.Primes -- package 'primes'
 import System.Timeout.Returning
 
--- | Loop forever, outputting prime twins.
-primeTwins :: MonadTimeout (Integer, Integer) m => [Integer] -> m ()
+-- | Loop forever, computing prime twins.
+primeTwins :: MonadTimeout (Integer, Integer) m => [Integer] -> m (Maybe (Integer,Integer))
 primeTwins (p : ps@(p' : _))
-    | p' == p + 2   = tell (p, p') >> primeTwins ps
+    | p' == p + 2   = partialResult (p, p') >> primeTwins ps
     | otherwise     = primeTwins ps
 
 -- | Print the largest pair of prime twins we were able to compute in 100ms.
 main :: IO ()
-main = runTimeout rseq 100000 (primeTwins primes) >>= print
+main = runTimeoutNF 100000 (primeTwins primes) >>= print
 ```
 
 ### Number guessing game
@@ -32,40 +32,39 @@ main = runTimeout rseq 100000 (primeTwins primes) >>= print
 import Control.Monad
 import Control.Monad.IO.Class
 import System.Random
-import System.Timeout.Returning
+import System.Timeout.Returning.Writer
 
 -- | Let the user guess until she hits the number.
-guess :: (MonadIO m, MonadTimeout Int m)
+guess :: (MonadIO m, MonadWriter [Int] m)
       => Int            -- ^ The number to be guessed.
       -> m ()
 guess n = loop
   where
     loop = do
-        i <- liftIO $ putStr "Guess: " >> readLn
-        -- If there was no previous guess, save @i@.
-        -- Otherwise, find the closest guess and save it.
-        tellWith $ maybe i (closer i)
-        case () of
-            _ | i == n    -> return ()
-              | i <  n    -> liftIO (putStrLn "Guess larger.")  >> loop
-              | i >  n    -> liftIO (putStrLn "Guess smaller.") >> loop
-    -- Returns the number closer to @n@.
-    closer i j | abs (i-n) <= abs (j-n)     = i
-               | otherwise                  = j
+        is <- liftIO $ putStr "Guess: " >> liftM reads getLine
+        case is of
+            ((i,_) : _) -> do
+                tell [i]
+                case i `compare` n of
+                    EQ  -> return ()
+                    LT  -> liftIO (putStrLn "Guess larger.")  >> loop
+                    GT  -> liftIO (putStrLn "Guess smaller.") >> loop
+            _ -> liftIO (putStrLn "Invalid number.") >> loop
 
 
--- | Guess the number
+-- | Guess a number.
 main :: IO ()
 main = do
-    let limit = 10
+    let limit = 20
     putStrLn "Guess a number from 1 to 100."
     putStrLn $ "You have " ++ show limit ++ " seconds."
     n <- randomRIO (1, 100)
-    r <- runTimeout rseq (limit * (10^6)) (guess n)
+    (r, w) <- runTimeout (limit * (10^6)) (guess n)
+    putStrLn ""
     putStr "The number was: " >> print n
-    if maybe False (== n) r
-        then putStrLn "You win!"
-        else putStr "Time's up, you lose. Your best guess: " >> print r
+    case r of
+        Just _      -> putStrLn "You win!"
+        otherwise   -> putStr "Time's up, you lose. Your guesses: " >> print w
 ```
 
 # Copyright

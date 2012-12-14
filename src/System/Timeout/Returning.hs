@@ -15,112 +15,86 @@
     along with timeout-with-results.  If not, see <http://www.gnu.org/licenses/>.
 -}
 
-{-# LANGUAGE MultiParamTypeClasses, FunctionalDependencies, FlexibleInstances, FlexibleContexts #-}
+{-# LANGUAGE
+    MultiParamTypeClasses,
+    FunctionalDependencies,
+    FlexibleInstances,
+    FlexibleContexts #-}
 
+{- | Defines a simple monad for computations that can be interrupted by a
+   timeout, and save partial results before that.
+  
+   If you need a more powerful mechanism, where you can retrieve and combine
+   previously saved partial results, use module
+   "System.Timeout.Returning.Writer".
+  
+   Mind that (from documentation of 'Control.Exception.Base.throwTo'): \"There
+   is no guarantee that the exception will be delivered promptly, although
+   the runtime will endeavour to ensure that arbitrary delays don't occur. In
+   GHC, an exception can only be raised when a thread reaches a safe point,
+   where a safe point is where memory allocation occurs. Some loops do not
+   perform any memory allocation inside the loop and therefore cannot be
+   interrupted by a @throwTo@.\"
+ -}
 module System.Timeout.Returning (
     MonadTimeout(..),
     Timeout(),
-    runTimeout,
-    -- helpers:
-    returning,
-    seqLast,
-    -- re-exports:
-    rseq, rdeepseq
+    runTimeoutNF,
+    runTimeoutWHNF,
 ) where
 {-
- Mind that (from documentation of throwTo):
-
-There is no guarantee that the exception will be delivered promptly, although the runtime will endeavour to ensure that arbitrary delays don't occur. In GHC, an exception can only be raised when a thread reaches a safe point, where a safe point is where memory allocation occurs. Some loops do not perform any memory allocation inside the loop and therefore cannot be interrupted by a throwTo. 
 -}
+import Control.Applicative
+import Control.DeepSeq (NFData(..))
 import Control.Monad
-import Control.Monad.Reader
-import qualified Control.Concurrent as C
-import Control.Concurrent.MVar
-import Control.Seq
-import qualified Data.Foldable as F
-import Data.Monoid
-import qualified System.Timeout as T
+import Control.Monad.Writer (MonadIO(..))
 
--- | Monad for computations that can save partial results
--- of type @w@ during their evaluation.
-class Monad m => MonadTimeout w m | m -> w where
-    -- | Save an intermediate result of the computation.
-    tell :: w -> m ()
-    --tell = tellWith . const
-    -- | Combine an intermediate result of the computation with the current
-    -- saved result (if any) and save it.
-    --tellWith :: (Maybe w -> w) -> m ()
-    -- | Explicitly allow interrupting the computation at this point.
-    -- Experimental.
-    yield :: m ()
+import System.Timeout.Returning.Writer
 
--- -----------------------------------------------------------------
 
 -- | An 'IO'-based implementation of 'MonadTimeout'.
-newtype Timeout w a = Timeout { untimeout :: ReaderT (w -> IO ()) IO a }
+-- Calling 'partialResult' replaces any previously written value
+-- with the new one.
+newtype Timeout w a = Timeout { getTimeout :: TimeoutWriter (Last' w) a }
 
+instance Functor (Timeout w) where
+    fmap = liftM
+instance Applicative (Timeout w) where
+    pure  = return
+    (<*>) = ap
 instance Monad (Timeout w) where
     return = Timeout . return
-    (Timeout v) >>= f = Timeout (v >>= (untimeout . f))
+    (Timeout v) >>= f = Timeout (v >>= (getTimeout . f))
 instance MonadIO (Timeout w) where
-    liftIO = Timeout . lift
-instance Monoid w => MonadTimeout w (Timeout w) where
-    tell x = Timeout $ ask >>= \r -> lift (r x)
-    --tellWith f = Timeout $ ask >>= \r -> lift (r f)
-    yield = liftIO C.yield
+    liftIO = Timeout . liftIO
+instance MonadTimeout w (Timeout w) where
+    partialResult = Timeout . tell . Last' . Just
+    yield = Timeout yield
 
+-- | Runs the given simple computation with the given timeout.  If the
+-- computation returns a value, the value is returned.  If it doesn't or
+-- times out, the last partial result written by 'partialResult' is returned.
+-- Each partial result is converted to /weak head normal form/ prior being
+-- saved.
+runTimeoutWHNF
+    :: Int                  -- ^ TimeoutWriter in microseconds.
+    -> Timeout w (Maybe w)  -- ^ The computation.
+    -> IO (Maybe w)         -- ^ The result, or 'Nothing' if no value was
+                            -- returned.
+runTimeoutWHNF duration (Timeout k) = do
+    (r, w) <- runTimeout duration k
+    return $ join r `mplus` (getLast' w)
 
-instance Functor Last where
-    fmap f (Last x)     = Last $ fmap f x
-instance F.Foldable Last where
-    foldr f z (Last x)  = F.foldr f z x
-
-seqLast :: Strategy a -> Strategy (Last a)
-seqLast = seqFoldable
-
-withTimeout :: (w' -> w) -> (Timeout w' a -> Timeout w a)
-withTimeout f (Timeout k) = Timeout $ withReaderT (. f) k
-
--- | Execute the given computation with a timeout limit and force
--- the result to the form defined by the given 'Strategy'.
--- In most cases, the strategy will be either 'rseq' or 'rdeepseq'.
--- This ensures that the computation is actually performed by the
--- given computation, not by the consuming thread.
-runTimeout'
-    :: Strategy w       -- ^ Evaluate values passed to 'tell' using this strategy.
-    -> Int              -- ^ Timeout in microseconds.
-    -> Timeout w ()     -- ^ The computation.
-    -> IO (Maybe w)     -- ^ The result, or 'Nothing' if no 'tell' was called by the computation.
-runTimeout' stg duration k = do
-    r <- runTimeout (seqLast stg) duration (withTimeout (Last . Just) k)
-    return $ either getLast (const Nothing) r
-{-
-    mvar <- newMVar Nothing
-    let save f = modifyMVar_ mvar (return . Just . withStrategy stg . f)
-    T.timeout duration (runReaderT k save)
-    readMVar mvar
--}
-
--- | Execute the given computation with a timeout limit and force
--- the result to the form defined by the given 'Strategy'.
--- In most cases, the strategy will be either 'rseq' or 'rdeepseq'.
--- This ensures that the computation is actually performed by the
--- given computation, not by the consuming thread.
-runTimeout
-    :: Monoid w
-    => Strategy w       -- ^ Evaluate values passed to 'tell' using this strategy.
-    -> Int              -- ^ Timeout in microseconds.
-    -> Timeout w r      -- ^ The computation.
-    -> IO (Either w r)  -- ^ Either the final result or
-                        -- the last partial result saved.
-runTimeout stg duration (Timeout k) = do
-    mvar <- newMVar (Right mempty)
-    let save x = modifyMVar_ mvar (return . liftM (withStrategy stg . (`mappend` x)))
-    T.timeout duration (runReaderT k save >>= \r -> modifyMVar_ mvar (\_ -> return $ Left r))
-    liftM (either Right Left) $ readMVar mvar
-
--- | Convert a monadic computation returning a value of the result type into
--- 'm ()' so that it can be used with 'runTimeout'. Calling 'returning k'
--- is equivalent to 'k >>= tell'.
-returning :: MonadTimeout w m => m w -> m ()
-returning = (>>= tell)
+-- | Runs the given simple computation with the given timeout.  If the
+-- computation returns a value, the value is returned.  If it doesn't or
+-- times out, the last partial result written by 'partialResult' is returned.
+-- Each partial result is converted to /normal form/ prior being saved.
+runTimeoutNF
+    :: NFData w
+    => Int                  -- ^ TimeoutWriter in microseconds.
+    -> Timeout w (Maybe w)  -- ^ The computation.
+    -> IO (Maybe w)         -- ^ The result, or 'Nothing' if no value was
+                            -- returned.
+runTimeoutNF duration (Timeout k) = do
+    (r, w) <- runTimeout duration (withTimeoutWriter NFMonoid k)
+    return $ join r `mplus` (getLast' . getNFMonoid $ w)

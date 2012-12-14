@@ -17,13 +17,16 @@ Cabal-Version:       >=1.6
 Stability:           Experimental
 Homepage:            https://github.com/ppetr/timeout-with-results
 Bug-reports:         https://github.com/ppetr/timeout-with-results/issues
+Extra-Source-Files:  README.md, COPYING, COPYING.LESSER
 
 Source-repository head
   type:     git
   location: git://github.com/ppetr/timeout-with-results.git
 
 Library
-  Build-Depends:     base == 4.*, parallel >= 3, mtl >= 2
-  Exposed-Modules:   System.Timeout.Returning
+  Build-Depends:     base == 4.*, mtl >= 2, parallel >= 3, deepseq >= 1.1
+  Exposed-Modules:
+    System.Timeout.Returning,
+    System.Timeout.Returning.Writer
   hs-source-dirs:    src
   --ghc-options:       -O2
