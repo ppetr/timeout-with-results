@@ -1,8 +1,21 @@
 # timeout-with-results
 
 A Haskell library that allows timeouting a computation while allowing it to
-return partial results.  Useful for making AI-like algorithms that should
+return partial results.  Useful for AI-like algorithms that should
 return the best result found within a time limit.
+
+It comes in two variants:
+
+1. Simple, which only allows computations to save partial results, not
+retrieve what has been written already. If a computation times out, the last
+saved partial result is returned. It comes in two flavours: One that converts
+saved values to WHNF, the other to NF. (This is required so that the producing
+thread performs the computations, not the consuming thread.)
+2. Based on MonadWriter. The types of partial results have to be monoids.
+Saving a partial result combines it with the saved value using `mappend`. It
+also adds the ability to run a contained computation within another one,
+without disturbing its output.
+
 
 ## Examples
 
